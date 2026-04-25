@@ -1,6 +1,10 @@
 pub struct Cartridge {
     rom: Vec<u8>,
     header: CartridgeHeader,
+    selected_rom_bank: usize,
+    ram: Vec<u8>,
+    selected_ram_bank: usize,
+    ram_enabled: bool,
 }
 
 pub struct CartridgeHeader {
@@ -63,8 +67,16 @@ impl Cartridge {
         }
 
         let header = Self::parse_header(&rom)?;
+        let ram = vec![0; header.ram_size_bytes];
 
-        Ok(Cartridge { rom, header })
+        Ok(Cartridge {
+            rom,
+            ram,
+            header,
+            selected_rom_bank: 1,
+            selected_ram_bank: 0,
+            ram_enabled: false,
+        })
     }
 
     pub fn header(&self) -> &CartridgeHeader {
@@ -159,5 +171,66 @@ impl Cartridge {
         }
 
         checksum
+    }
+
+    pub fn read_rom(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x3FFF => self.rom[address as usize],
+
+            0x4000..=0x7FFF => {
+                let offset = address as usize - 0x4000;
+                let index = self.selected_rom_bank * 0x4000 + offset;
+
+                self.rom[index]
+            }
+
+            _ => panic!("Cartridge ROM read out of range: 0x{:04X}", address),
+        }
+    }
+
+    pub fn write_rom_control(&mut self, address: u16, value: u8) {
+        match address {
+            0x2000..=0x3FFF => {
+                let mut bank = (value & 0x7F) as usize;
+
+                if bank == 0 {
+                    bank = 1;
+                }
+
+                self.selected_rom_bank = bank % self.header.rom_banks;
+            }
+            0x0000..=0x1FFF => {
+                self.ram_enabled = (value & 0x0F) == 0x0A;
+            }
+            0x4000..=0x5FFF => {
+                self.selected_ram_bank = (value as usize) & 0x03;
+            }
+
+            _ => {
+                // ignore for now
+            }
+        }
+    }
+
+    pub fn read_ram(&self, address: u16) -> u8 {
+        if !self.ram_enabled || self.ram.is_empty() {
+            return 0xFF;
+        }
+
+        let offset = address as usize - 0xA000;
+        let index = self.selected_ram_bank * 0x2000 + offset;
+
+        self.ram[index]
+    }
+
+    pub fn write_ram(&mut self, address: u16, value: u8) {
+        if !self.ram_enabled || self.ram.is_empty() {
+            return;
+        }
+
+        let offset = address as usize - 0xA000;
+        let index = self.selected_ram_bank * 0x2000 + offset;
+
+        self.ram[index] = value;
     }
 }
